@@ -1,64 +1,174 @@
+//package packag;
+
 import javax.swing.*;
 import java.awt.*;
+import java.util.ArrayList;
+import java.util.List;
 
 public class car {
-	int row;
-	int col;
-	Color color;
-	
-	public car(int row, Color color) {
-		this.row=row;
-		this.col=0;
-		this.color=color;
-	}
+    int row;
+    int col;
+    Color color;
+//car object 
+    public car(int row, Color color) {
+        this.row = row;
+        this.col = 0;
+        this.color = color;
+    }
 
-    public static void main(String[] args) {
-        SwingUtilities.invokeLater(new Runnable() {
-            public void run() {
-                JFrame frame = new JFrame("Grid-Based Racing Game");
-                int numCars= 5;
-                final RaceTrack track = new RaceTrack(5);
+    // --- Race Controller ---
+    static class RaceController {
+        private final RaceTrack track;
+        private final Object pauseLock = new Object();
+        private final List<Thread> threads = new ArrayList<>();
+        private volatile boolean running = false;
+        private volatile boolean paused = false;
+        private volatile boolean winner = false;
 
-                frame.add(track);
-                frame.setSize(800, 400);
-                frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-                frame.setLocationRelativeTo(null);
-                frame.setVisible(true);
+        private final JButton startBtn, pauseBtn, resumeBtn, stopBtn, resetBtn, restartBtn;
 
-                // Create and start car threads
-                for (car car : track.getCars()) { // assuming you add a getter in RaceTrack
-                    new Thread(() -> {
-                        try {
-                            boolean moving = true;
-                            while (moving) {
-                                Thread.sleep((int) (Math.random() * 500 + 200)); // random speed
-                                synchronized (track) {
-                                    moving = track.moveCar(car);
-                                }
+        RaceController(RaceTrack track, JButton start, JButton pause, JButton resume,
+                       JButton stop, JButton reset, JButton restart) {
+            this.track = track;
+            this.startBtn = start;
+            this.pauseBtn = pause;
+            this.resumeBtn = resume;
+            this.stopBtn = stop;
+            this.resetBtn = reset;
+            this.restartBtn = restart;
+            updateButtons();
+        }
+
+        void updateButtons() {
+            SwingUtilities.invokeLater(() -> {
+                startBtn.setEnabled(!running);
+                pauseBtn.setEnabled(running && !paused);
+                resumeBtn.setEnabled(running && paused);
+                stopBtn.setEnabled(running);
+                resetBtn.setEnabled(!running);
+                restartBtn.setEnabled(!running);
+            });
+        }
+
+        void startRace() {
+            if (running) return;
+            running = true;
+            paused = false;
+            threads.clear();
+            // create each car object as a seperate thread
+            for (car c : track.getCars()) {
+                Thread t = new Thread(() -> {
+                    boolean moving = true;
+                    while (running && moving) {
+                        synchronized (pauseLock) {
+                            while (paused && running) {
+                                try { pauseLock.wait(); }
+                                catch (InterruptedException ignored) {}
                             }
-                            System.out.println("Car finished on row " + car.row);
-                        } catch (InterruptedException e) {
-                            e.printStackTrace();
                         }
-                    }).start();
-                }
+                        if (!running || winner) break;
+                        //cars move at random spped 
+                        try { Thread.sleep((int) (Math.random() * 500 + 200)); }
+                        catch (InterruptedException ie) { if (!running) break; }
+
+                        moving = track.moveCar(c);
+                    }
+                    //detect race complettion 
+                    if (c.col>=track.getFinishCol() && !winner) { //when one car reaches the finish line
+                    	winner=true;
+                    	System.out.println("Winner!");
+                    	SwingUtilities.invokeLater(() -> 
+                        JOptionPane.showMessageDialog(null, 
+                            "🏁 Winner! ", 
+                            "Race Over", JOptionPane.INFORMATION_MESSAGE) //pop up message declaring there is a winner
+                    );
+                    stopRace(); // stop all other cars when race ends
+		
+                    }
+                });
+                t.start();
+                threads.add(t);
             }
+            updateButtons();
+        }
+
+        void pauseRace() {
+            if (!running || paused) return;
+            paused = true;
+            updateButtons();
+        }
+
+        void resumeRace() {
+            if (!running || !paused) return;
+            paused = false;
+            synchronized (pauseLock) { pauseLock.notifyAll(); }
+            updateButtons();
+        }
+
+        void stopRace() {
+            if (!running) return;
+            running = false;
+            synchronized (pauseLock) { pauseLock.notifyAll(); }
+            for (Thread t : threads) t.interrupt();
+            threads.clear();
+            updateButtons();
+        }
+
+        void resetRace() {
+            stopRace();
+            track.resetCarsToStart();
+            updateButtons();
+        }
+
+        void restartRace() {
+            resetRace();
+            startRace();
+        }
+    }
+
+    // --- Main Program (UI) ---
+    public static void main(String[] args) {
+        SwingUtilities.invokeLater(() -> {
+            JFrame frame = new JFrame("Grid-Based Racing Game");
+            int numCars = 5;
+            final RaceTrack track = new RaceTrack(numCars);
+
+            frame.setLayout(new BorderLayout());
+            frame.add(track, BorderLayout.CENTER);
+
+            // Control Panel
+            JPanel controls = new JPanel(new FlowLayout(FlowLayout.LEFT));
+            JButton startBtn = new JButton("Start");
+            JButton pauseBtn = new JButton("Pause");
+            JButton resumeBtn = new JButton("Resume");
+            JButton stopBtn = new JButton("Stop");
+            JButton resetBtn = new JButton("Reset");
+            JButton restartBtn = new JButton("Restart");
+
+            controls.add(startBtn);
+            controls.add(pauseBtn);
+            controls.add(resumeBtn);
+            controls.add(stopBtn);
+            controls.add(resetBtn);
+            controls.add(restartBtn);
+            frame.add(controls, BorderLayout.NORTH);
+
+            // Controller
+            RaceController controller = new RaceController(
+                    track, startBtn, pauseBtn, resumeBtn, stopBtn, resetBtn, restartBtn
+            );
+
+            startBtn.addActionListener(e -> controller.startRace());
+            pauseBtn.addActionListener(e -> controller.pauseRace());
+            resumeBtn.addActionListener(e -> controller.resumeRace());
+            stopBtn.addActionListener(e -> controller.stopRace());
+            resetBtn.addActionListener(e -> controller.resetRace());
+            restartBtn.addActionListener(e -> controller.restartRace());
+
+            frame.pack();
+            frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+            frame.setLocationRelativeTo(null);
+            frame.setVisible(true);
         });
-
-
-  /*  private static void moveCar(RaceTrack track, int carNumber) {
-        try {
-            boolean moving = true;
-            while (moving) {
-                Thread.sleep((int)(Math.random() * 500 + 200)); // random speed
-                synchronized (track) {
-                    moving = track.moveCar(carNumber);
-                }
-            }
-            System.out.println("Car " + carNumber + " finished!");
-        } catch (InterruptedException e) {
-            e.printStackTrace();
-        }
-    }*/
-        }
+    }
 }
