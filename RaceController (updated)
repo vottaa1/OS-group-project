@@ -1,0 +1,99 @@
+import java.util.ArrayList;
+import java.util.List;
+import javax.swing.*;
+
+public class RaceController {
+    private final RaceTrack track;
+    private final Object pauseLock = new Object();
+    private final List<Thread> threads = new ArrayList<>();
+    private volatile boolean running = false;
+    private volatile boolean paused = false;
+
+    private final JButton startBtn, pauseBtn, resumeBtn, stopBtn, resetBtn, restartBtn;
+
+    RaceController(RaceTrack track, JButton start, JButton pause, JButton resume,
+                   JButton stop, JButton reset, JButton restart) {
+        this.track = track;
+        this.startBtn = start;
+        this.pauseBtn = pause;
+        this.resumeBtn = resume;
+        this.stopBtn = stop;
+        this.resetBtn = reset;
+        this.restartBtn = restart;
+        updateButtons();
+    }
+
+    void updateButtons() {
+        SwingUtilities.invokeLater(() -> {
+            startBtn.setEnabled(!running);
+            pauseBtn.setEnabled(running && !paused);
+            resumeBtn.setEnabled(running && paused);
+            stopBtn.setEnabled(running);
+            resetBtn.setEnabled(!running);
+            restartBtn.setEnabled(!running);
+        });
+    }
+
+    void startRace() {
+        if (running) return;
+        running = true;
+        paused = false;
+        threads.clear();
+
+        for (car c : track.getCars()) {
+            Thread t = new Thread(() -> {
+                boolean moving = true;
+                while (running && moving) {
+                    synchronized (pauseLock) {
+                        while (paused && running) {
+                            try { pauseLock.wait(); }
+                            catch (InterruptedException ignored) {}
+                        }
+                    }
+                    if (!running) break;
+
+                    try { Thread.sleep((int) (Math.random() * 500 + 200)); }
+                    catch (InterruptedException ie) { if (!running) break; }
+
+                    moving = track.moveCar(c);
+                }
+            });
+            t.start();
+            threads.add(t);
+        }
+        updateButtons();
+    }
+
+    void pauseRace() {
+        if (!running || paused) return;
+        paused = true;
+        updateButtons();
+    }
+
+    void resumeRace() {
+        if (!running || !paused) return;
+        paused = false;
+        synchronized (pauseLock) { pauseLock.notifyAll(); }
+        updateButtons();
+    }
+
+    void stopRace() {
+        if (!running) return;
+        running = false;
+        synchronized (pauseLock) { pauseLock.notifyAll(); }
+        for (Thread t : threads) t.interrupt();
+        threads.clear();
+        updateButtons();
+    }
+
+    void resetRace() {
+        stopRace();
+        track.resetCarsToStart();
+        updateButtons();
+    }
+
+    void restartRace() {
+        resetRace();
+        startRace();
+    }
+}
