@@ -50,7 +50,7 @@ public class RaceController {
                             catch (InterruptedException ignored) {}
                         }
                     }
-                    if (!running) break;
+                    if (!running || track.isRaceOver()) break;
 
                     try { Thread.sleep((int) (Math.random() * 500 + 200)); }
                     catch (InterruptedException ie) { if (!running) break; }
