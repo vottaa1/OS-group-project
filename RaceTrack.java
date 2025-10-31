@@ -10,12 +10,21 @@ public class RaceTrack extends JPanel {
     private final int cols = 30;
     private final int startCol = 1;
     private final int finishCol = cols-1;
-    private final int[][] grid = new int[rows][cols]; // 0 = empty, 1 = car1, 2 = car2, 3 = finish
+    private final int[][] grid = new int[rows][cols]; 
 
+    private volatile boolean raceOver = false;
+    private car winner = null;
+    
+    
     //initalize list of cars 
     private final List<car> cars =new ArrayList<>();
     private final Color[] colors = {Color.RED, Color.BLUE, Color.ORANGE, Color.CYAN};
+    
+    //Synchornization locks for mutex locks
+    private final Synchronization.CustomLock trackLock = new Synchronization.CustomLock();
+    private final Synchronization.WinnerFlag winnerFlag = new Synchronization.WinnerFlag();
 
+    //create race track
     public RaceTrack(int numCars) {
         // Set finish line col
         for (int r = 0; r < rows; r++) {
@@ -37,32 +46,59 @@ public class RaceTrack extends JPanel {
         }
        
     }
-    //use java synchronize methods to prevent race conditions
-    public synchronized boolean moveCar(car c) { //car moves forward if it is not at the finish line
-        int nextCol = c.col + 1;
+    
+    public boolean moveCar(car c) {
+    	trackLock.lock();
+    	try {
+            if (winnerFlag.getWinner() != null) return false;
 
-        if (nextCol >= finishCol) { //if cars current location is at the finish line
-            c.col = finishCol;
+            int nextCol = c.col + 1;
+
+            if (nextCol >= finishCol) {
+                c.col = finishCol;
+                SwingUtilities.invokeLater(this::repaint);
+                declareWinner(c);
+                return false; // finished
+            }
+
+            // Simple collision prevention (prevents two cars from occupying the same space)
+            for (car other : cars) {
+                if (other != c && other.row == c.row && other.col == nextCol) {
+                    // Car cannot move forward, stays in place this turn
+                    return true; 
+                }
+            }
+
+            c.col = nextCol;
             SwingUtilities.invokeLater(this::repaint);
-            return false; // finished
+            return true;
+        } finally {
+            trackLock.unlock();
         }
-
-        // prevent overlap
-        for (car other : cars) {
-            if (other != c && other.row == c.row && other.col == nextCol) return true;
-        }
-
-        // car is not at finish line, move forward one col
-        c.col = nextCol;
-        SwingUtilities.invokeLater(this::repaint);
-        return true;
     }
 
-    //reset race, all cars go back to start 
-    public synchronized void resetCarsToStart() {
-        for (car c : cars) c.col = 0;
-        repaint();
+    public boolean isRaceOver() {
+    	return winnerFlag.getWinner() != null;
     }
+
+    //Synchronization for the finish line
+    //Make sure that no car can enter if there is a winner
+    public void declareWinner(car c) {
+        winnerFlag.setWinner(c);
+    }
+
+    public void resetCarsToStart() {
+        trackLock.lock();
+        try {
+            for (car c : cars) c.col = startCol;
+            winnerFlag.reset();
+            repaint();
+        } finally {
+            trackLock.unlock();
+        }
+    }
+
+
        
  //draw graphics 
     @Override
@@ -98,6 +134,17 @@ public class RaceTrack extends JPanel {
             	g.setColor(car.color);
             	g.fillRect(car.col * cellWidth, car.row * cellHeight, cellWidth, cellHeight);
         }
+            
+            // Draw Winner Text
+            car winner = winnerFlag.getWinner();
+            if (winner != null) {
+                g.setColor(winner.color); // Color would change depends on which car is the winner
+                g.setFont(new Font("Inter", Font.BOLD, 30));
+                String winText = "Winner: Car on Row " + (winner.row+1) + "!";
+                FontMetrics fm = g.getFontMetrics();
+                int textX = (getWidth() - fm.stringWidth(winText)) / 2;
+                g.drawString(winText, textX, getHeight() - 10);
+            }  
 
      // Draw START text vertically
         Graphics2D g2 = (Graphics2D) g.create(); // create a copy to avoid rotating everything
